@@ -305,7 +305,7 @@ static inline NSString * AFHMACSHA1Signature(NSURLRequest *request, NSString *co
         [parameters setValue:requestToken.key forKey:@"oauth_token"];
         NSMutableURLRequest *request = [super requestWithMethod:@"GET" path:userAuthorizationPath parameters:parameters];
         [request setHTTPShouldHandleCookies:NO];
-        [self openAuthorizationURL:[request URL]];
+        [self openAuthorizationURL:request];
     } failure:^(NSError *error) {
         if (failure) {
             failure(error);
@@ -313,11 +313,11 @@ static inline NSString * AFHMACSHA1Signature(NSURLRequest *request, NSString *co
     }];
 }
 
-- (void)openAuthorizationURL:(NSURL *)authURL {
+- (void)openAuthorizationURL:(NSURLRequest *)request{
 #if __IPHONE_OS_VERSION_MIN_REQUIRED
-    [[UIApplication sharedApplication] openURL:authURL];
+    [[UIApplication sharedApplication] openURL:[request URL]];
 #else
-    [[NSWorkspace sharedWorkspace] openURL:authURL];
+    [[NSWorkspace sharedWorkspace] openURL:[request URL]];
 #endif
 }
 
