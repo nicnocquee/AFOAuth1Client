@@ -132,12 +132,12 @@ static inline NSString * AFHMACSHA1Signature(NSURLRequest *request, NSString *co
     return AFEncodeBase64WithData([NSData dataWithBytes:digest length:CC_SHA1_DIGEST_LENGTH]);
 }
 
-NSString * const kAFOAuthCredentialServiceName = @"AFOAuthCredentialService";
+NSString * const kAFOAuth1CredentialServiceName = @"AFOAuthCredentialService";
 
 static NSDictionary * AFKeychainQueryDictionaryWithIdentifier(NSString *identifier) {
     return @{(__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
              (__bridge id)kSecAttrAccount: identifier,
-             (__bridge id)kSecAttrService: kAFOAuthCredentialServiceName
+             (__bridge id)kSecAttrService: kAFOAuth1CredentialServiceName
              };
 }
 
@@ -362,26 +362,32 @@ static NSDictionary * AFKeychainQueryDictionaryWithIdentifier(NSString *identifi
                                 success:(void (^)(AFOAuth1Token *accessToken, id responseObject))success
                                 failure:(void (^)(NSError *error))failure
 {
-    self.accessToken = requestToken;
-
-    NSMutableDictionary *parameters = [[self OAuthParameters] mutableCopy];
-    parameters[@"oauth_token"] = requestToken.key;
-    parameters[@"oauth_verifier"] = requestToken.verifier;
-
-    NSMutableURLRequest *request = [self requestWithMethod:accessMethod path:path parameters:parameters];
-
-    AFHTTPRequestOperation *operation = [self HTTPRequestOperationWithRequest:request success:^(AFHTTPRequestOperation *operation, id responseObject) {
-        if (success) {
-            AFOAuth1Token *accessToken = [[AFOAuth1Token alloc] initWithQueryString:operation.responseString];
-            success(accessToken, responseObject);
-        }
-    } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
-        if (failure) {
-            failure(error);
-        }
-    }];
-
-    [self enqueueHTTPRequestOperation:operation];
+    if (requestToken.key && requestToken.verifier) {
+        self.accessToken = requestToken;
+        
+        NSMutableDictionary *parameters = [[self OAuthParameters] mutableCopy];
+        parameters[@"oauth_token"] = requestToken.key;
+        parameters[@"oauth_verifier"] = requestToken.verifier;
+        
+        NSMutableURLRequest *request = [self requestWithMethod:accessMethod path:path parameters:parameters];
+        
+        AFHTTPRequestOperation *operation = [self HTTPRequestOperationWithRequest:request success:^(AFHTTPRequestOperation *operation, id responseObject) {
+            if (success) {
+                AFOAuth1Token *accessToken = [[AFOAuth1Token alloc] initWithQueryString:operation.responseString];
+                success(accessToken, responseObject);
+            }
+        } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
+            if (failure) {
+                failure(error);
+            }
+        }];
+        
+        [self enqueueHTTPRequestOperation:operation];
+    } else {
+        NSDictionary *userInfo = [NSDictionary dictionaryWithObject:NSLocalizedStringFromTable(@"Bad OAuth response received from the server.", @"AFNetworking", nil) forKey:NSLocalizedFailureReasonErrorKey];
+        NSError *error = [[NSError alloc] initWithDomain:AFNetworkingErrorDomain code:NSURLErrorBadServerResponse userInfo:userInfo];
+        failure(error);
+    }
 }
 
 #pragma mark - AFHTTPClient
@@ -399,10 +405,13 @@ static NSDictionary * AFKeychainQueryDictionaryWithIdentifier(NSString *identifi
 
     NSMutableURLRequest *request = [super requestWithMethod:method path:path parameters:mutableParameters];
 
-
-    // Only use parameters in the HTTP POST request body (with a content-type of `application/x-www-form-urlencoded`).
+    // Only use parameters in the request entity body (with a content-type of `application/x-www-form-urlencoded`).
     // See RFC 5849, Section 3.4.1.3.1 http://tools.ietf.org/html/rfc5849#section-3.4
-    NSDictionary *authorizationParameters = ([[request valueForHTTPHeaderField:@"Content-Type"] hasPrefix:@"application/x-www-form-urlencoded"] ? parameters : nil);
+    NSDictionary *authorizationParameters = parameters;
+    if (!([method isEqualToString:@"GET"] || [method isEqualToString:@"HEAD"] || [method isEqualToString:@"DELETE"])) {
+        authorizationParameters = ([[request valueForHTTPHeaderField:@"Content-Type"] hasPrefix:@"application/x-www-form-urlencoded"] ? parameters : nil);
+    }
+    
     [request setValue:[self authorizationHeaderForMethod:method path:path parameters:authorizationParameters] forHTTPHeaderField:@"Authorization"];
     [request setHTTPShouldHandleCookies:NO];
     
@@ -544,7 +553,7 @@ static NSDictionary * AFKeychainQueryDictionaryWithIdentifier(NSString *identifi
 }
 
 - (BOOL)isExpired{
-    return [self.expiration compare:[NSDate date]] == NSOrderedDescending;
+    return [self.expiration compare:[NSDate date]] == NSOrderedAscending;
 }
 
 #pragma mark -
@@ -583,6 +592,13 @@ static NSDictionary * AFKeychainQueryDictionaryWithIdentifier(NSString *identifi
 + (BOOL)storeCredential:(AFOAuth1Token *)credential
          withIdentifier:(NSString *)identifier
 {
+    return [[self class] storeCredential:credential withIdentifier:identifier withAccessibility:(__bridge id)kSecAttrAccessibleWhenUnlocked];
+}
+
++ (BOOL)storeCredential:(AFOAuth1Token *)credential
+         withIdentifier:(NSString *)identifier
+      withAccessibility:(id)securityAccessibility
+{
     NSMutableDictionary *mutableQueryDictionary = [AFKeychainQueryDictionaryWithIdentifier(identifier) mutableCopy];
 
     if (!credential) {
@@ -592,6 +608,7 @@ static NSDictionary * AFKeychainQueryDictionaryWithIdentifier(NSString *identifi
     NSMutableDictionary *mutableUpdateDictionary = [NSMutableDictionary dictionary];
     NSData *data = [NSKeyedArchiver archivedDataWithRootObject:credential];
     mutableUpdateDictionary[(__bridge id)kSecValueData] = data;
+    [mutableUpdateDictionary setObject:securityAccessibility forKey:(__bridge id)kSecAttrAccessible];
 
     OSStatus status;
     BOOL exists = !![self retrieveCredentialWithIdentifier:identifier];
