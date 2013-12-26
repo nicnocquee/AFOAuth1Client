@@ -118,17 +118,17 @@ static inline NSString * AFHMACSHA1Signature(NSURLRequest *request, NSString *co
     NSString *secret = tokenSecret ? tokenSecret : @"";
     NSString *secretString = [NSString stringWithFormat:@"%@&%@", AFPercentEscapedQueryStringPairMemberFromStringWithEncoding(consumerSecret, stringEncoding), AFPercentEscapedQueryStringPairMemberFromStringWithEncoding(secret, stringEncoding)];
     NSData *secretStringData = [secretString dataUsingEncoding:stringEncoding];
-
-    NSString *queryString = AFPercentEscapedQueryStringPairMemberFromStringWithEncoding([[[[[request URL] query] componentsSeparatedByString:@"&"] sortedArrayUsingSelector:@selector(compare:)] componentsJoinedByString:@"&"], stringEncoding);
+    NSString *query = [[request URL] query];
+    NSString *queryString = AFPercentEscapedQueryStringPairMemberFromStringWithEncoding([[[query componentsSeparatedByString:@"&"] sortedArrayUsingSelector:@selector(compare:)] componentsJoinedByString:@"&"], stringEncoding);
     NSString *requestString = [NSString stringWithFormat:@"%@&%@&%@", [request HTTPMethod], AFPercentEscapedQueryStringPairMemberFromStringWithEncoding([[[request URL] absoluteString] componentsSeparatedByString:@"?"][0], stringEncoding), queryString];
     NSData *requestStringData = [requestString dataUsingEncoding:stringEncoding];
-
+    
     uint8_t digest[CC_SHA1_DIGEST_LENGTH];
     CCHmacContext cx;
     CCHmacInit(&cx, kCCHmacAlgSHA1, [secretStringData bytes], [secretStringData length]);
     CCHmacUpdate(&cx, [requestStringData bytes], [requestStringData length]);
     CCHmacFinal(&cx, digest);
-
+    
     return AFEncodeBase64WithData([NSData dataWithBytes:digest length:CC_SHA1_DIGEST_LENGTH]);
 }
 
@@ -234,25 +234,31 @@ static NSDictionary * AFKeychainQueryDictionaryWithIdentifier(NSString *identifi
                                 parameters:(NSDictionary *)parameters
 {
     static NSString * const kAFOAuth1AuthorizationFormatString = @"OAuth %@";
-
+    
     NSMutableDictionary *mutableParameters = parameters ? [parameters mutableCopy] : [NSMutableDictionary dictionary];
     NSMutableDictionary *mutableAuthorizationParameters = [NSMutableDictionary dictionary];
-
+    
     if (self.key && self.secret) {
         [mutableAuthorizationParameters addEntriesFromDictionary:[self OAuthParameters]];
         if (self.accessToken) {
             mutableAuthorizationParameters[@"oauth_token"] = self.accessToken.key;
         }
     }
-
+    
     [mutableParameters enumerateKeysAndObjectsUsingBlock:^(id key, id obj, BOOL *stop) {
         if ([key isKindOfClass:[NSString class]] && [key hasPrefix:@"oauth_"]) {
             mutableAuthorizationParameters[key] = obj;
         }
     }];
-
+    
     [mutableParameters addEntriesFromDictionary:mutableAuthorizationParameters];
-    mutableAuthorizationParameters[@"oauth_signature"] = [self OAuthSignatureForMethod:method path:path parameters:mutableParameters token:self.accessToken];
+    
+    NSDictionary *paramsToSign = mutableParameters;
+    if ([method isEqualToString:@"PUT"]) {
+        paramsToSign = mutableAuthorizationParameters;
+    }
+    
+    mutableAuthorizationParameters[@"oauth_signature"] = [self OAuthSignatureForMethod:method path:path parameters:paramsToSign token:self.accessToken];
     
     NSArray *sortedComponents = [[AFQueryStringFromParametersWithEncoding(mutableAuthorizationParameters, self.stringEncoding) componentsSeparatedByString:@"&"] sortedArrayUsingSelector:@selector(caseInsensitiveCompare:)];
     NSMutableArray *mutableComponents = [NSMutableArray array];
